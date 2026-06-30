@@ -191,7 +191,9 @@
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span id="updateStatus" style="font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-soft)"></span>
         <span id="srcBadge" style="font-family:ui-monospace,monospace;font-size:11px;letter-spacing:.04em"></span>
+        <button class="reload" id="update" style="background:var(--ink);color:var(--paper);border-color:var(--ink)">Update now</button>
         <button class="reload" id="refresh">Refresh data</button>
         <button class="reload" id="reload">Upload a file</button>
       </div>
@@ -265,14 +267,18 @@
 
 /* =====================================================================
    DATA SOURCE
-   Point this at the CSV that holds your persistent data.
-   - Leave as "data.csv" to load a file sitting next to this page
-     (e.g. committed in a GitHub Pages repo — replace it to update).
-   - Or set a full URL to a cloud bucket / published Google Sheet CSV,
-     e.g. "https://my-bucket.s3.amazonaws.com/connie.csv".
-   Set to null to disable auto-loading (manual upload only).
+   - DATA_URL: where the dashboard reads its data from. This is your
+     published Google Sheet CSV (gviz) link. If you ever change the Sheet,
+     update this URL.  ***Replace the SHEET_ID/sheet below with your live
+     value if it differs from what you already committed.***
+   - UPDATE_URL: the Apps Script Web App /exec URL. The "Update now" button
+     calls this to pull the newest CSV from your Drive folder into the Sheet.
+     Set to null to hide the button (the 15-min timer still updates the Sheet).
    ===================================================================== */
-const CONFIG = { DATA_URL: "https://docs.google.com/spreadsheets/d/1FJyrgkr9hKfSc6AaYdQe1dc94jOjoJV49UkzWQ4aFJ8/gviz/tq?tqx=out:csv&sheet=Cashboard_data" };
+const CONFIG = {
+  DATA_URL:   "https://docs.google.com/spreadsheets/d/1FJyrgkr9hKfSc6AaYdQe1dc94jOjoJV49UkzWQ4aFJ8/gviz/tq?tqx=out:csv&sheet=Cashboard_data",
+  UPDATE_URL: "https://script.google.com/macros/s/AKfycbw471nL2C7bWxUsNc8pUDG1otyv24KP6_5sgn9tCr75EsGe8oKj3bfDKXoYMUO7wBgb/exec"
+};
 let DATA_SOURCE = null; // "file" (persistent) or "upload" (one-off), set at load time
 
 /* datalabels is registered but OFF by default; each chart opts in via options.plugins.datalabels */
@@ -544,7 +550,8 @@ function draw(){
   const hrsOpts=headroom(baseOpts("hours"));
   hrsOpts.scales.y.ticks.precision=undefined;
   hrsOpts.scales.y.ticks.callback=(val)=>round1(val/60);
-  hrsOpts.plugins.datalabels=segLabels(v=>fmtHours(v));
+  const hrLabel=mins=> mins>0 ? (Math.round(mins/60*10)/10).toFixed(1) : "";  // e.g. "6.2"
+  hrsOpts.plugins.datalabels=segLabels(hrLabel);
   hrsOpts.plugins.tooltip.callbacks={
     label:i=>i.dataset.label+": "+fmtHours(i.parsed.y),
     footer:items=>{let t=0;items.forEach(i=>t+=i.parsed.y);return "Total: "+fmtHours(t);}
@@ -554,7 +561,7 @@ function draw(){
       {label:"Left",data:data.map(d=>round1(d.fLeftMin)),backgroundColor:css("--left"),borderWidth:0,borderRadius:3,stack:"m"},
       {label:"Right",data:data.map(d=>round1(d.fRightMin)),backgroundColor:css("--right"),borderWidth:0,borderRadius:3,stack:"m"}
     ]},options:hrsOpts,
-    plugins:[totalsPlugin(t=>fmtHours(t),true)]});
+    plugins:[totalsPlugin(hrLabel,true)]});
 
   // 02c average length per feed — clustered: avg left, avg right, avg whole feed (per session)
   const avgOpts=headroom(baseOpts("minutes / feed"));
@@ -566,7 +573,7 @@ function draw(){
     anchor:"end", align:"top", offset:0,
     color:css("--ink"),
     font:{family:"ui-monospace, Menlo, Consolas, monospace", size:9, weight:"600"},
-    formatter:v=>fmtHours(v)
+    formatter:v=> v>0 ? Math.round(v) : ""    // bare minutes, no "min"
   };
   avgOpts.plugins.tooltip.callbacks={ label:i=>i.dataset.label+": "+fmtHours(i.parsed.y), footer:()=>"" };
   upsert("cFeedAvg",{type:"bar",
@@ -852,6 +859,44 @@ if(refreshBtn){
     const old=refreshBtn.textContent; refreshBtn.textContent="Refreshing…"; refreshBtn.disabled=true;
     await loadFromUrl(true);
     refreshBtn.textContent=old; refreshBtn.disabled=false;
+  });
+}
+
+/* "Update now": tell the Apps Script to pull the newest CSV from Drive into
+   the Sheet, then re-read the Sheet and redraw. The call is fired in no-cors
+   mode (Apps Script doesn't return CORS headers a browser can read), so we
+   don't read its reply — we detect success by re-loading and comparing the
+   record count. The script still runs server-side regardless. */
+const updateBtn=document.getElementById("update");
+const updateStatus=document.getElementById("updateStatus");
+function setStatus(msg){ if(updateStatus) updateStatus.textContent=msg||""; }
+if(updateBtn){
+  if(!CONFIG.UPDATE_URL){ updateBtn.style.display="none"; }
+  updateBtn.addEventListener("click",async()=>{
+    const before = RAW ? RAW.length : 0;
+    const old=updateBtn.textContent; updateBtn.textContent="Updating…"; updateBtn.disabled=true;
+    setStatus("Pulling the latest export from Drive…");
+    try{
+      // fire the ingest; resolves after the script finishes writing the Sheet
+      await fetch(CONFIG.UPDATE_URL,{mode:"no-cors",cache:"no-store"});
+    }catch(e){ /* opaque/no-cors: ignore, the request still reached the script */ }
+
+    // poll the Sheet a few times: the gviz CSV can take a moment to reflect the write
+    setStatus("Refreshing the charts…");
+    let changed=false;
+    for(let i=0;i<5 && !changed;i++){
+      await new Promise(r=>setTimeout(r, i===0?1500:2000));
+      await loadFromUrl(false);
+      if(RAW && RAW.length!==before) changed=true;
+    }
+    if(!changed) await loadFromUrl(true); // ensure at least one visible refresh + surface any load error
+
+    const after = RAW ? RAW.length : 0;
+    setStatus(changed
+      ? "Updated — now "+after+" records."
+      : "Refreshed. No change in record count ("+after+") — the newest file may already be loaded.");
+    updateBtn.textContent=old; updateBtn.disabled=false;
+    setTimeout(()=>setStatus(""), 8000);
   });
 }
 
