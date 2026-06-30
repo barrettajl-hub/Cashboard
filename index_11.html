@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Cashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --ink:#26201b;
+    --ink-soft:#6f655c;
+    --paper:#faf6ef;
+    --card:#fffdf9;
+    --line:#e7ddd0;
+    --rule:#d8cdbd;
+    /* nappies */
+    --wet:#6fa8c4;
+    --dirty:#b07d4f;
+    /* feeding */
+    --left:#c47b8e;
+    --right:#5f8a76;
+    --avg:#caa24a;
+    /* growth */
+    --weight:#7d6b91;
+    --shadow:0 1px 0 #fff inset, 0 2px 14px rgba(54,42,30,.06);
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:32px 22px 80px}
+
+  /* Masthead */
+  header.mast{
+    border-bottom:2px solid var(--ink);
+    padding-bottom:14px; margin-bottom:6px;
+  }
+  .eyebrow{
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    font-size:11px; letter-spacing:.28em; text-transform:uppercase;
+    color:var(--ink-soft); margin:0 0 6px;
+  }
+  h1.title{
+    font-size:clamp(30px,6vw,54px); line-height:1.02; margin:0;
+    font-weight:600; letter-spacing:-.01em;
+  }
+  .subline{
+    display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline;
+    margin-top:10px; font-size:13px; color:var(--ink-soft);
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  .subline b{color:var(--ink); font-weight:600}
+
+  /* Control bar */
+  .controls{
+    display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+    justify-content:space-between;
+    margin:22px 0 8px; padding:14px 16px;
+    background:var(--card); border:1px solid var(--line);
+    border-radius:var(--radius); box-shadow:var(--shadow);
+  }
+  .seg-label{
+    font-family:ui-monospace,monospace; font-size:11px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--ink-soft); margin-right:4px;
+  }
+  .seg{
+    display:inline-flex; background:#f0e9dd; border:1px solid var(--line);
+    border-radius:999px; padding:3px; gap:2px;
+  }
+  .seg button{
+    border:0; background:transparent; cursor:pointer;
+    font-family:ui-monospace,monospace; font-size:12px; letter-spacing:.04em;
+    color:var(--ink-soft); padding:7px 14px; border-radius:999px;
+    transition:all .18s ease;
+  }
+  .seg button[aria-pressed="true"]{
+    background:var(--ink); color:var(--paper);
+  }
+  .seg button:focus-visible{outline:2px solid var(--avg); outline-offset:2px}
+  .reload{
+    font-family:ui-monospace,monospace; font-size:12px;
+    background:transparent; border:1px solid var(--rule);
+    color:var(--ink); padding:8px 14px; border-radius:999px; cursor:pointer;
+  }
+  .reload:hover{background:#f0e9dd}
+
+  /* Upload / drop zone */
+  #drop{
+    margin:30px 0; border:2px dashed var(--rule); border-radius:var(--radius);
+    background:var(--card); padding:46px 24px; text-align:center;
+    transition:border-color .2s, background .2s;
+  }
+  #drop.drag{border-color:var(--avg); background:#fff7e6}
+  #drop h2{margin:0 0 6px; font-size:22px; font-weight:600}
+  #drop p{margin:4px 0; color:var(--ink-soft); font-size:14px}
+  .filebtn{
+    display:inline-block; margin-top:14px; cursor:pointer;
+    background:var(--ink); color:var(--paper); border-radius:999px;
+    padding:11px 22px; font-family:ui-monospace,monospace; font-size:13px;
+    letter-spacing:.04em;
+  }
+  .filebtn input{display:none}
+  .err{color:#a23b2d; font-size:13px; margin-top:10px; font-family:ui-monospace,monospace}
+
+  /* Stat strip */
+  .stats{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:0;
+    border:1px solid var(--line); border-radius:var(--radius);
+    overflow:hidden; background:var(--card); box-shadow:var(--shadow);
+    margin:24px 0 8px;
+  }
+  .stat{padding:16px 18px; border-right:1px solid var(--line)}
+  .stat:last-child{border-right:0}
+  .stat .n{font-size:26px; font-weight:600; letter-spacing:-.01em}
+  .stat .l{
+    font-family:ui-monospace,monospace; font-size:10.5px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--ink-soft); margin-top:2px;
+  }
+  @media(max-width:640px){
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .stat:nth-child(2){border-right:0}
+    .stat:nth-child(1),.stat:nth-child(2){border-bottom:1px solid var(--line)}
+  }
+
+  /* Section + cards */
+  .section-head{
+    display:flex; align-items:baseline; gap:14px;
+    margin:46px 0 4px; padding-bottom:8px;
+    border-bottom:1px solid var(--rule);
+  }
+  .section-head .num{
+    font-family:ui-monospace,monospace; font-size:12px; color:var(--ink-soft);
+    letter-spacing:.1em;
+  }
+  .section-head h2{font-size:24px; font-weight:600; margin:0; letter-spacing:-.01em}
+  .section-head .leg{margin-left:auto; display:flex; gap:14px; flex-wrap:wrap}
+  .swatch{display:inline-flex; align-items:center; gap:6px; font-size:12px;
+    font-family:ui-monospace,monospace; color:var(--ink-soft)}
+  .swatch i{width:11px; height:11px; border-radius:3px; display:inline-block}
+
+  .card{
+    background:var(--card); border:1px solid var(--line);
+    border-radius:var(--radius); box-shadow:var(--shadow);
+    padding:18px 18px 14px; margin-top:20px;
+  }
+  .card h3{margin:0 0 2px; font-size:16px; font-weight:600}
+  .card .cap{font-size:12.5px; color:var(--ink-soft); margin:0 0 12px}
+  .chartbox{position:relative; height:300px}
+  @media(max-width:640px){.chartbox{height:260px}}
+
+  .hidden{display:none !important}
+  footer{margin-top:60px; padding-top:18px; border-top:1px solid var(--rule);
+    font-family:ui-monospace,monospace; font-size:11.5px; color:var(--ink-soft)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">Daily Nursery Log</p>
+    <h1 class="title" id="babyName">The Cashboard</h1>
+    <div class="subline" id="subline"></div>
+  </header>
+
+  <!-- Upload zone -->
+  <div id="drop">
+    <h2>No data file found yet</h2>
+    <p>When hosted with a published <code>data.csv</code>, this dashboard loads it automatically. You can also drop a CSV here to preview it just for yourself (a one-off, not saved for others).</p>
+    <p>Everything runs in your browser. Uploaded files are never sent anywhere.</p>
+    <label class="filebtn">Choose CSV file
+      <input type="file" id="file" accept=".csv,text/csv">
+    </label>
+    <div class="err" id="err"></div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dash" class="hidden">
+
+    <div class="controls">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="seg-label">Day starts at</span>
+        <div class="seg" role="group" aria-label="Day boundary">
+          <button id="modeCal" aria-pressed="true">Midnight · calendar dates</button>
+          <button id="modeBorn" aria-pressed="false">11:20 · days since birth</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span id="srcBadge" style="font-family:ui-monospace,monospace;font-size:11px;letter-spacing:.04em"></span>
+        <button class="reload" id="refresh">Refresh data</button>
+        <button class="reload" id="reload">Upload a file</button>
+      </div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <!-- Nappies -->
+    <div class="section-head">
+      <span class="num">01</span>
+      <h2>Nappies</h2>
+      <span class="leg">
+        <span class="swatch"><i style="background:var(--wet)"></i>Wet</span>
+        <span class="swatch"><i style="background:var(--dirty)"></i>Dirty</span>
+      </span>
+    </div>
+    <div class="card">
+      <h3>Nappies per day</h3>
+      <p class="cap">Wet and dirty counts stacked. A mixed nappy counts once as wet and once as dirty.</p>
+      <div class="chartbox"><canvas id="cNappy"></canvas></div>
+    </div>
+
+    <!-- Feeding -->
+    <div class="section-head">
+      <span class="num">02</span>
+      <h2>Feeding</h2>
+      <span class="leg">
+        <span class="swatch"><i style="background:var(--left)"></i>Left</span>
+        <span class="swatch"><i style="background:var(--right)"></i>Right</span>
+      </span>
+    </div>
+    <div class="card">
+      <h3>Feeds per day, by breast</h3>
+      <p class="cap">Stack height is the number of distinct feeds. A both-breast feed is split between sides by the share of time spent on each.</p>
+      <div class="chartbox"><canvas id="cFeedCount"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Time fed per day, by breast</h3>
+      <p class="cap">Total recorded time at each breast per day. The y-axis is in hours; labels show hours and minutes.</p>
+      <div class="chartbox"><canvas id="cFeedMins"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Average length of a feed</h3>
+      <p class="cap">Average time on the left (over feeds that used the left), on the right (over feeds that used the right), and the average total length of a whole feed (over all feeds). Feeds of 5 minutes or less are excluded throughout.</p>
+      <div class="chartbox"><canvas id="cFeedAvg"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Feeding through the day</h3>
+      <p class="cap">Every feed plotted by time of day — midnight at the top, across the dates tracked. Always shown by calendar day, regardless of the toggle above.</p>
+      <div class="chartbox" style="height:380px"><canvas id="cActogram"></canvas></div>
+    </div>
+
+    <!-- Growth -->
+    <div class="section-head" id="growthSection">
+      <span class="num">03</span>
+      <h2>Growth</h2>
+      <span class="leg"><span class="swatch"><i style="background:var(--weight)"></i>Weight</span></span>
+    </div>
+    <div class="card" id="growthCard">
+      <h3>Weight over time</h3>
+      <p class="cap">Each recorded weight in kilograms. The line connects only the measurements that exist.</p>
+      <div class="chartbox"><canvas id="cWeight"></canvas></div>
+    </div>
+
+    <footer id="footer"></footer>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+   DATA SOURCE
+   Point this at the CSV that holds your persistent data.
+   - Leave as "data.csv" to load a file sitting next to this page
+     (e.g. committed in a GitHub Pages repo — replace it to update).
+   - Or set a full URL to a cloud bucket / published Google Sheet CSV,
+     e.g. "https://my-bucket.s3.amazonaws.com/connie.csv".
+   Set to null to disable auto-loading (manual upload only).
+   ===================================================================== */
+const CONFIG = { DATA_URL: "data.csv" };
+let DATA_SOURCE = null; // "file" (persistent) or "upload" (one-off), set at load time
+
+/* datalabels is registered but OFF by default; each chart opts in via options.plugins.datalabels */
+if (window.ChartDataLabels) { Chart.register(window.ChartDataLabels); Chart.defaults.set('plugins.datalabels', { display:false }); }
+
+/* number + hour formatting */
+function round1(n){return Math.round(n*10)/10;}
+function fmtNum(n){ return Math.abs(n-Math.round(n))<0.05 ? String(Math.round(n)) : round1(n).toFixed(1); }
+/* Format a duration given in MINUTES.
+   Under 1 hour -> "20min".  1 hour or more -> "1 hr, 20 mins" / "2 hrs" (mins dropped when zero). */
+function fmtHours(mins){
+  if(mins==null || mins<=0) return "";
+  const total=Math.round(mins);
+  if(total<60) return total+"min";
+  const h=Math.floor(total/60);
+  const m=total-h*60;
+  const hPart=h+(h===1?" hr":" hrs");
+  return m===0 ? hPart : hPart+", "+m+(m===1?" min":" mins");
+}
+
+/* ---------- Birth reference: 22 June 2026, 11:20 local ---------- */
+const BIRTH = { y:2026, mo:6, d:22, h:11, min:20 };
+const DAY_START_HOUR = BIRTH.h, DAY_START_MIN = BIRTH.min;
+
+let RAW = null;          // parsed rows
+let MODE = "cal";        // "cal" | "born"
+const charts = {};
+
+/* ---------- Date helpers (parse the app's "YYYY-MM-DD HH:MM:SS" as local) ---------- */
+function parseLocal(s){
+  if(!s) return null;
+  const m = String(s).trim().match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if(!m) return null;
+  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+}
+function ymd(dt){
+  return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+}
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTHS_FULL=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const WEEKDAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+function ord(n){ const v=n%100; return (v>=11&&v<=13) ? "th" : (["th","st","nd","rd"][n%10]||"th"); }
+/* "Tuesday 23rd June" — returned as a 2-line array for compact chart axes */
+function fmtDOW(d){ return [WEEKDAYS[d.getDay()], d.getDate()+ord(d.getDate())+" "+MONTHS_FULL[d.getMonth()]]; }
+function dateFromSort(s){ return new Date(Math.floor(s/10000), Math.floor(s/100)%100-1, s%100); }
+
+/* Minimum feed length to keep, in seconds (feeds of 5 minutes or less are excluded). */
+const MIN_FEED_SEC = 300;
+function feedTotalSec(r){
+  return num(r["[Breastfeed] Left Duration (Seconds)"]) + num(r["[Breastfeed] Right Duration (Seconds)"]);
+}
+
+/* Bucket key + sortable index + label for a timestamp, per current MODE */
+function bucketCal(dt){
+  const key = ymd(dt);
+  return { key, sort: dt.getFullYear()*10000+(dt.getMonth()+1)*100+dt.getDate(),
+           label: fmtDOW(new Date(dt.getFullYear(),dt.getMonth(),dt.getDate())) };
+}
+function bornDayNumber(dt){
+  // Day 1 = the 24h window beginning at birth instant.
+  const birth = new Date(BIRTH.y, BIRTH.mo-1, BIRTH.d, BIRTH.h, BIRTH.min, 0);
+  const shifted = dt.getTime() - birth.getTime();
+  return Math.floor(shifted / 86400000) + 1; // before birth -> <=0
+}
+function bucketBorn(dt){
+  const n = bornDayNumber(dt);
+  return { key:"D"+n, sort:n, label:"Day "+n };
+}
+function bucketOf(dt){ return MODE==="cal" ? bucketCal(dt) : bucketBorn(dt); }
+
+/* ---------- Aggregation ---------- */
+function num(v){ const n=parseFloat(v); return isFinite(n)?n:0; }
+function blankDay(label,sort){ return {label,sort,
+  wet:0,dirty:0,fLeftCount:0,fRightCount:0,fLeftMin:0,fRightMin:0,
+  fLeftUsed:0,fRightUsed:0,sessions:0,totalMin:0}; }
+
+function aggregate(rows){
+  const days = new Map();
+  function slot(dt){
+    const b = bucketOf(dt);
+    if(!days.has(b.sort)) days.set(b.sort, blankDay(b.label,b.sort));
+    return days.get(b.sort);
+  }
+  for(const r of rows){
+    const type=(r["Type"]||"").trim();
+    const dt=parseLocal(r["Start Date/time"]);
+    if(!dt) continue;
+
+    if(type==="Diaper"){
+      const d=(r["[Diaper] Type"]||"").toLowerCase();
+      const s=slot(dt);
+      const isWet=d.includes("wet")||d.includes("mixed")||d.includes("both");
+      const isDirty=d.includes("dirty")||d.includes("poo")||d.includes("soil")||d.includes("mixed")||d.includes("both");
+      if(isWet) s.wet++;
+      if(isDirty) s.dirty++;
+      if(!isWet && !isDirty && d) s.wet++; // unknown -> count as a nappy (wet bucket) so it's visible
+    }
+    else if(type==="Breastfeed"){
+      const lSec=num(r["[Breastfeed] Left Duration (Seconds)"]);
+      const rSec=num(r["[Breastfeed] Right Duration (Seconds)"]);
+      const tot=lSec+rSec;
+      if(tot<=MIN_FEED_SEC) continue;       // skip feeds of 5 minutes or less
+      const s=slot(dt);
+      // feeds-per-day chart: split the single session between breasts by time share
+      if(tot>0){
+        s.fLeftCount  += lSec/tot;
+        s.fRightCount += rSec/tot;
+      }
+      s.fLeftMin += lSec/60;
+      s.fRightMin += rSec/60;
+      if(lSec>0) s.fLeftUsed++;            // sessions that actually used each breast
+      if(rSec>0) s.fRightUsed++;
+      s.sessions += 1;                      // one distinct session regardless of sides
+      s.totalMin += (lSec+rSec)/60;
+    }
+  }
+  // continuous range fill so gaps show as zero days
+  const arr=[...days.values()];
+  if(arr.length){
+    const lo=Math.min(...arr.map(d=>d.sort)), hi=Math.max(...arr.map(d=>d.sort));
+    if(MODE==="born"){
+      for(let n=lo;n<=hi;n++) if(!days.has(n)) days.set(n, blankDay("Day "+n, n));
+    } else {
+      // fill calendar gaps day by day
+      let cur=new Date(Math.floor(lo/10000),Math.floor(lo/100)%100-1,lo%100);
+      const end=new Date(Math.floor(hi/10000),Math.floor(hi/100)%100-1,hi%100);
+      while(cur<=end){
+        const sort=cur.getFullYear()*10000+(cur.getMonth()+1)*100+cur.getDate();
+        if(!days.has(sort)) days.set(sort, blankDay(fmtDOW(dateFromSort(sort)), sort));
+        cur.setDate(cur.getDate()+1);
+      }
+    }
+  }
+  return [...days.values()].sort((a,b)=>a.sort-b.sort);
+}
+
+/* ---------- Chart styling ---------- */
+const FONT={family:"ui-monospace, Menlo, Consolas, monospace", size:11};
+const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+function baseOpts(yTitle){
+  return {
+    responsive:true, maintainAspectRatio:false,
+    interaction:{mode:"index",intersect:false},
+    plugins:{
+      legend:{display:false},
+      tooltip:{
+        backgroundColor:"#26201b", titleFont:FONT, bodyFont:FONT, padding:10,
+        callbacks:{ footer:items=>{
+          let t=0; items.forEach(i=>t+=i.parsed.y); 
+          return items.length>1 ? "Total: "+round1(t) : "";
+        }}
+      }
+    },
+    scales:{
+      x:{stacked:true, grid:{display:false}, ticks:{font:FONT,color:css("--ink-soft"),
+         maxRotation:0, autoSkipPadding:14}},
+      y:{stacked:true, beginAtZero:true, grid:{color:css("--line")},
+         ticks:{font:FONT,color:css("--ink-soft"),precision:0},
+         title:{display:!!yTitle,text:yTitle,font:FONT,color:css("--ink-soft")}}
+    }
+  };
+}
+
+/* In-segment datalabels: value drawn in the middle of each stack piece.
+   fmt(value) returns the string; hideSmall skips tiny slivers. */
+function segLabels(fmt){
+  return {
+    display:ctx=>{
+      const v=ctx.dataset.data[ctx.dataIndex];
+      return v!=null && v>0;
+    },
+    color:"#fff",
+    font:{family:"ui-monospace, Menlo, Consolas, monospace", size:10, weight:"600"},
+    formatter:(v)=> v>0 ? fmt(v) : ""
+  };
+}
+
+/* Totals above each bar. For stacked charts we attach this to the LAST visible
+   dataset and have it sum the stack; for single-series charts it just shows the value. */
+function totalsPlugin(fmt, isStacked){
+  return {
+    id:"totals_"+Math.random().toString(36).slice(2),
+    afterDatasetsDraw(chart){
+      const {ctx,scales}=chart;
+      const meta0=chart.getDatasetMeta(0);
+      if(!meta0 || meta0.hidden) return;
+      ctx.save();
+      ctx.font='600 11px ui-monospace, Menlo, Consolas, monospace';
+      ctx.fillStyle=css("--ink");
+      ctx.textAlign="center"; ctx.textBaseline="bottom";
+      const n=chart.data.labels.length;
+      for(let i=0;i<n;i++){
+        let total=0;
+        chart.data.datasets.forEach(ds=>{ const v=ds.data[i]; if(typeof v==="number") total+=v; });
+        if(total<=0) continue;
+        // topmost pixel of the stack = the bar element in the last dataset
+        const lastMeta=chart.getDatasetMeta(chart.data.datasets.length-1);
+        const bar=lastMeta.data[i];
+        if(!bar) continue;
+        const x=bar.x;
+        const yTop=isStacked ? Math.min(...chart.data.datasets.map((ds,di)=>{
+          const m=chart.getDatasetMeta(di).data[i]; return m? m.y : Infinity;
+        })) : bar.y;
+        ctx.fillText(fmt(total), x, yTop-4);
+      }
+      ctx.restore();
+    }
+  };
+}
+
+/* Dotted horizontal reference line at a given y-value, with a small right-aligned label. */
+function thresholdLine(value, label){
+  return {
+    id:"threshold_"+value+"_"+Math.random().toString(36).slice(2),
+    afterDatasetsDraw(chart){
+      const y=chart.scales.y, area=chart.chartArea, ctx=chart.ctx;
+      const yPix=y.getPixelForValue(value);
+      if(yPix<area.top || yPix>area.bottom) return;
+      ctx.save();
+      ctx.strokeStyle="#9a9087";
+      ctx.lineWidth=1.5;
+      ctx.setLineDash([2,3]);
+      ctx.beginPath(); ctx.moveTo(area.left,yPix); ctx.lineTo(area.right,yPix); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font='600 10px ui-monospace, Menlo, Consolas, monospace';
+      ctx.fillStyle="#7d756c";
+      ctx.textAlign="right"; ctx.textBaseline="bottom";
+      ctx.fillText(label, area.right-6, yPix-3);
+      ctx.restore();
+    }
+  };
+}
+
+function draw(){
+  const data=aggregate(RAW);
+  const labels=data.map(d=>d.label);
+
+  renderStats(data);
+
+  const headroom = o => { o.scales.y.grace="14%"; return o; };
+
+  // 01 Nappies — counts
+  const nappyMax=Math.max(0,...data.map(d=>d.wet+d.dirty));
+  const nappyOpts=headroom(baseOpts("nappies"));
+  nappyOpts.scales.y.suggestedMax=Math.max(nappyMax,7); // keep the 6-wet line in view
+  nappyOpts.plugins.datalabels=segLabels(fmtNum);
+  upsert("cNappy",{type:"bar",
+    data:{labels,datasets:[
+      {label:"Wet",data:data.map(d=>d.wet),backgroundColor:css("--wet"),borderWidth:0,borderRadius:3,stack:"n"},
+      {label:"Dirty",data:data.map(d=>d.dirty),backgroundColor:css("--dirty"),borderWidth:0,borderRadius:3,stack:"n"}
+    ]},options:nappyOpts,
+    plugins:[totalsPlugin(fmtNum,true), thresholdLine(6,"6 wet / day target")]});
+
+  // 02a feeds per day by breast — stack total = distinct sessions, split by time share
+  const countOpts=headroom(baseOpts("feeds"));
+  countOpts.plugins.datalabels=segLabels(fmtNum);
+  countOpts.plugins.tooltip.callbacks={
+    label:i=>i.dataset.label+": "+round1(i.parsed.y),
+    footer:items=>{let t=0;items.forEach(i=>t+=i.parsed.y);return "Total: "+round1(t)+" feeds";}
+  };
+  upsert("cFeedCount",{type:"bar",
+    data:{labels,datasets:[
+      {label:"Left",data:data.map(d=>d.fLeftCount),backgroundColor:css("--left"),borderWidth:0,borderRadius:3,stack:"f"},
+      {label:"Right",data:data.map(d=>d.fRightCount),backgroundColor:css("--right"),borderWidth:0,borderRadius:3,stack:"f"}
+    ]},options:countOpts,
+    plugins:[totalsPlugin(fmtNum,true)]});
+
+  // 02b time per day by breast — in hours (data stored as minutes)
+  const hrsOpts=headroom(baseOpts("hours"));
+  hrsOpts.scales.y.ticks.precision=undefined;
+  hrsOpts.scales.y.ticks.callback=(val)=>round1(val/60);
+  hrsOpts.plugins.datalabels=segLabels(v=>fmtHours(v));
+  hrsOpts.plugins.tooltip.callbacks={
+    label:i=>i.dataset.label+": "+fmtHours(i.parsed.y),
+    footer:items=>{let t=0;items.forEach(i=>t+=i.parsed.y);return "Total: "+fmtHours(t);}
+  };
+  upsert("cFeedMins",{type:"bar",
+    data:{labels,datasets:[
+      {label:"Left",data:data.map(d=>round1(d.fLeftMin)),backgroundColor:css("--left"),borderWidth:0,borderRadius:3,stack:"m"},
+      {label:"Right",data:data.map(d=>round1(d.fRightMin)),backgroundColor:css("--right"),borderWidth:0,borderRadius:3,stack:"m"}
+    ]},options:hrsOpts,
+    plugins:[totalsPlugin(t=>fmtHours(t),true)]});
+
+  // 02c average length per feed — clustered: avg left, avg right, avg whole feed (per session)
+  const avgOpts=headroom(baseOpts("minutes / feed"));
+  avgOpts.scales.x.stacked=false; avgOpts.scales.y.stacked=false;
+  avgOpts.plugins.legend={display:true, position:"top", align:"end",
+    labels:{font:FONT, color:css("--ink-soft"), boxWidth:11, boxHeight:11, usePointStyle:false}};
+  avgOpts.plugins.datalabels={
+    display:ctx=>ctx.dataset.data[ctx.dataIndex]>0,
+    anchor:"end", align:"top", offset:0,
+    color:css("--ink"),
+    font:{family:"ui-monospace, Menlo, Consolas, monospace", size:9, weight:"600"},
+    formatter:v=>fmtHours(v)
+  };
+  avgOpts.plugins.tooltip.callbacks={ label:i=>i.dataset.label+": "+fmtHours(i.parsed.y), footer:()=>"" };
+  upsert("cFeedAvg",{type:"bar",
+    data:{labels,datasets:[
+      {label:"Left",        data:data.map(d=>d.fLeftUsed ?round1(d.fLeftMin/d.fLeftUsed):0),  backgroundColor:css("--left"), borderWidth:0,borderRadius:3},
+      {label:"Right",       data:data.map(d=>d.fRightUsed?round1(d.fRightMin/d.fRightUsed):0), backgroundColor:css("--right"),borderWidth:0,borderRadius:3},
+      {label:"Both breasts",data:data.map(d=>d.sessions  ?round1(d.totalMin/d.sessions):0),    backgroundColor:css("--avg"),  borderWidth:0,borderRadius:3}
+    ]},options:avgOpts});
+
+  // 03 Feeding-through-the-day raster (always calendar days, ignores the toggle)
+  drawActogram();
+
+  // 03 Growth — weight over time
+  drawWeight();
+}
+
+function upsert(id,config){
+  if(charts[id]){ charts[id].destroy(); }
+  charts[id]=new Chart(document.getElementById(id),config);
+}
+
+/* ---------- Feeding-through-the-day raster (plain canvas) ---------- */
+function drawActogram(){
+  const canvas=document.getElementById("cActogram");
+  if(!canvas) return;
+  const parent=canvas.parentElement;
+  const cssW=parent.clientWidth, cssH=parent.clientHeight;
+  if(cssW<10){ requestAnimationFrame(drawActogram); return; } // wait for layout
+  const dpr=window.devicePixelRatio||1;
+  canvas.width=Math.round(cssW*dpr); canvas.height=Math.round(cssH*dpr);
+  canvas.style.width=cssW+"px"; canvas.style.height=cssH+"px";
+  const ctx=canvas.getContext("2d");
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,cssW,cssH);
+
+  // gather feeds with start + total duration (minutes), excluding feeds <= 5 min
+  const feeds=[]; let minDate=null,maxDate=null;
+  for(const r of RAW){
+    if((r["Type"]||"")!=="Breastfeed") continue;
+    const dt=parseLocal(r["Start Date/time"]); if(!dt) continue;
+    if(feedTotalSec(r)<=MIN_FEED_SEC) continue;
+    const dur=feedTotalSec(r)/60;
+    feeds.push({dt,dur});
+    const d0=new Date(dt.getFullYear(),dt.getMonth(),dt.getDate());
+    if(!minDate||d0<minDate) minDate=d0;
+    if(!maxDate||d0>maxDate) maxDate=d0;
+  }
+  if(!feeds.length) return;
+
+  const mL=46, mR=14, mT=8, mB=34;
+  const plotW=cssW-mL-mR, plotH=cssH-mT-mB;
+  const DAY=86400000;
+  const nDays=Math.round((maxDate-minDate)/DAY)+1;
+  const colW=plotW/nDays;
+  const yFor=min=>mT+(min/1440)*plotH;
+  const xFor=day=>mL+day*colW;
+
+  // plot background
+  ctx.fillStyle="#fffdf9";
+  ctx.fillRect(mL,mT,plotW,plotH);
+
+  // hour gridlines + labels every 6h
+  ctx.strokeStyle=css("--line"); ctx.lineWidth=1;
+  ctx.fillStyle=css("--ink-soft");
+  ctx.font="11px ui-monospace, Menlo, Consolas, monospace";
+  ctx.textAlign="right"; ctx.textBaseline="middle";
+  for(let h=0;h<=24;h+=6){
+    const y=yFor(h*60);
+    ctx.beginPath(); ctx.moveTo(mL,y); ctx.lineTo(mL+plotW,y); ctx.stroke();
+    ctx.fillText((h<10?"0"+h:h)+":00", mL-6, y);
+  }
+
+  // feeds as yellow marks (split across midnight where needed)
+  ctx.fillStyle=css("--avg");
+  for(const f of feeds){
+    let day=Math.round((new Date(f.dt.getFullYear(),f.dt.getMonth(),f.dt.getDate())-minDate)/DAY);
+    let start=f.dt.getHours()*60+f.dt.getMinutes()+f.dt.getSeconds()/60;
+    let remaining=f.dur;
+    do{
+      const segEnd=Math.min(1440, start+remaining);
+      const y=yFor(start);
+      const h=Math.max(2.5, yFor(segEnd)-y);
+      if(day>=0 && day<nDays) ctx.fillRect(xFor(day), y, Math.max(1,colW), h);
+      remaining-=(segEnd-start);
+      start=0; day++;
+    } while(remaining>0.1 && day<nDays);
+  }
+
+  // border
+  ctx.strokeStyle=css("--rule"); ctx.lineWidth=1; ctx.strokeRect(mL,mT,plotW,plotH);
+
+  // per-day date labels (two lines: weekday + "23rd June"); auto-skip if columns too narrow
+  ctx.font="9.5px ui-monospace, Menlo, Consolas, monospace";
+  ctx.fillStyle=css("--ink-soft"); ctx.textAlign="center"; ctx.textBaseline="top";
+  let widest=0;
+  for(let i=0;i<nDays;i++){
+    const d=new Date(minDate.getFullYear(),minDate.getMonth(),minDate.getDate()+i);
+    const two=fmtDOW(d);
+    widest=Math.max(widest, ctx.measureText(two[0]).width, ctx.measureText(two[1]).width);
+  }
+  let step=1; while(colW*step < widest+6) step++;
+  const baseY=mT+plotH+5;
+  for(let i=0;i<nDays;i+=step){
+    const d=new Date(minDate.getFullYear(),minDate.getMonth(),minDate.getDate()+i);
+    const two=fmtDOW(d);
+    const cx=xFor(i)+colW/2;
+    ctx.fillText(two[0], cx, baseY);
+    ctx.fillText(two[1], cx, baseY+11);
+  }
+}
+
+/* ---------- Weight over time (line through actual measurements only) ---------- */
+function getWeights(rows){
+  const out=[];
+  for(const r of rows){
+    if((r["Type"]||"")!=="Growth") continue;
+    const w=parseFloat(r["[Growth] Weight"]);
+    if(!isFinite(w) || w<=0) continue;
+    const unit=(r["[Growth] Weight Unit"]||"KG").toUpperCase();
+    let kg=w;
+    if(unit==="G"||unit==="GRAM"||unit==="GRAMS") kg=w/1000;
+    else if(unit==="LB"||unit==="LBS"||unit==="POUND"||unit==="POUNDS") kg=w*0.45359237;
+    else if(unit==="OZ"||unit==="OUNCE"||unit==="OUNCES") kg=w*0.0283495231;
+    const dt=parseLocal(r["Start Date/time"]);
+    if(!dt) continue;
+    out.push({dt,kg});
+  }
+  out.sort((a,b)=>a.dt-b.dt);
+  return out;
+}
+
+function drawWeight(){
+  const pts=getWeights(RAW);
+  const section=document.getElementById("growthSection");
+  const card=document.getElementById("growthCard");
+  if(!pts.length){
+    if(section) section.style.display="none";
+    if(card) card.style.display="none";
+    if(charts.cWeight){ charts.cWeight.destroy(); delete charts.cWeight; }
+    return;
+  }
+  if(section) section.style.display="";
+  if(card) card.style.display="";
+
+  const labels=pts.map(p=> MODE==="cal"
+    ? fmtDOW(new Date(p.dt.getFullYear(),p.dt.getMonth(),p.dt.getDate()))
+    : "Day "+bornDayNumber(p.dt));
+  const kgs=pts.map(p=> Math.round(p.kg*1000)/1000);
+  const kgLabel=v=> (Math.round(v*100)/100)+" kg";
+
+  const opts=baseOpts("kg");
+  opts.scales.x.stacked=false;
+  opts.scales.y.stacked=false;
+  opts.scales.y.beginAtZero=true;   // anchor the axis at 0 kg
+  opts.scales.y.grace="10%";        // headroom above the top point for its label
+  opts.scales.y.ticks.precision=undefined;
+  opts.layout={padding:{top:22,right:14,left:8}};
+  opts.scales.x.offset=true; // keep points off the axis edges (helps a single measurement)
+  opts.plugins.legend={display:false};
+  opts.plugins.datalabels={
+    display:true, anchor:"end", align:"top", offset:4,
+    color:css("--ink"),
+    font:{family:"ui-monospace, Menlo, Consolas, monospace", size:10, weight:"600"},
+    formatter:kgLabel
+  };
+  opts.plugins.tooltip.callbacks={ label:i=>kgLabel(i.parsed.y), footer:()=>"" };
+
+  upsert("cWeight",{type:"line",
+    data:{labels,datasets:[{
+      label:"Weight",
+      data:kgs,
+      borderColor:css("--weight"),
+      backgroundColor:css("--weight"),
+      pointBackgroundColor:css("--weight"),
+      pointBorderColor:css("--weight"),
+      pointRadius:4, pointHoverRadius:6,
+      borderWidth:2, tension:0, fill:false, spanGaps:true
+    }]},
+    options:opts});
+}
+
+/* ---------- Stat strip ---------- */
+function renderStats(data){
+  let nappies=0,feeds=0,mins=0,days=data.length;
+  data.forEach(d=>{nappies+=d.wet+d.dirty;feeds+=d.sessions;mins+=d.totalMin;});
+  const el=document.getElementById("stats");
+  const perDay=days?round1(feeds/days):0;
+  el.innerHTML=[
+    ["Days tracked",days],
+    ["Total feeds",feeds],
+    ["Avg feeds / day",perDay],
+    ["Total nappies",nappies]
+  ].map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+}
+
+/* ---------- Load + parse ---------- */
+function handleRows(rows){
+  // keep only data rows that have a Type
+  RAW=rows.filter(r=>r && r["Type"]);
+  if(!RAW.length){showErr("No activity rows found in that file. Is it the full app export?");return;}
+
+  // header
+  document.getElementById("babyName").textContent="The Cashboard";
+
+  const dts=RAW.map(r=>parseLocal(r["Start Date/time"])).filter(Boolean).sort((a,b)=>a-b);
+  let latestStr="";
+  if(dts.length){
+    const f=dts[0],l=dts[dts.length-1];
+    const fmt=d=>d.getDate()+" "+MONTHS[d.getMonth()]+" "+d.getFullYear();
+    latestStr=fmt(l);
+    document.getElementById("subline").innerHTML=
+      `<span><b>${RAW.length}</b> records</span>`+
+      `<span>${fmt(f)} → ${fmt(l)}</span>`+
+      `<span>Born <b>22 Jun 2026, 11:20</b></span>`;
+  }
+  const srcNote = DATA_SOURCE==="file"
+    ? `Loaded from the published data file (latest record ${latestStr}). Replace that file to update what everyone sees, then press “Refresh data”.`
+    : `Loaded from a one-off upload (latest record ${latestStr}). This is only visible to you and isn't saved — to update the shared version, replace the published data file.`;
+  document.getElementById("footer").textContent=srcNote;
+
+  // surface the source + refresh control in the top bar when hosted
+  const badge=document.getElementById("srcBadge");
+  if(badge){
+    badge.textContent = DATA_SOURCE==="file" ? "● data file" : "● uploaded (not saved)";
+    badge.style.color = DATA_SOURCE==="file" ? "var(--right)" : "var(--dirty)";
+  }
+
+  document.getElementById("drop").classList.add("hidden");
+  document.getElementById("dash").classList.remove("hidden");
+  draw();
+}
+
+function loadFile(file){
+  showErr("");
+  if(!file){return;}
+  Papa.parse(file,{header:true,skipEmptyLines:true,
+    complete:res=>{
+      try{ DATA_SOURCE="upload"; handleRows(res.data); }
+      catch(e){ showErr("Could not read that file: "+e.message); }
+    },
+    error:e=>showErr("Could not read that file: "+e.message)
+  });
+}
+function showErr(m){document.getElementById("err").textContent=m;}
+
+/* ---------- Load the persistent CSV from CONFIG.DATA_URL ---------- */
+async function loadFromUrl(showErrors){
+  if(!CONFIG.DATA_URL) return false;
+  // cache-bust so a freshly-replaced file shows up without a hard refresh
+  const url = CONFIG.DATA_URL + (CONFIG.DATA_URL.includes("?")?"&":"?") + "t=" + Date.now();
+  try{
+    const res=await fetch(url,{cache:"no-store"});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const text=await res.text();
+    const parsed=Papa.parse(text,{header:true,skipEmptyLines:true});
+    DATA_SOURCE="file";
+    handleRows(parsed.data);
+    return true;
+  }catch(e){
+    if(showErrors) showErr("Couldn't load the data file ("+e.message+"). You can upload a CSV manually below.");
+    return false;
+  }
+}
+function tryAutoload(){ loadFromUrl(false); }
+
+/* ---------- Wiring ---------- */
+document.getElementById("file").addEventListener("change",e=>loadFile(e.target.files[0]));
+const drop=document.getElementById("drop");
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("drag");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("drag");}));
+drop.addEventListener("drop",e=>{const f=e.dataTransfer.files[0];if(f)loadFile(f);});
+
+document.getElementById("reload").addEventListener("click",()=>{
+  document.getElementById("dash").classList.add("hidden");
+  document.getElementById("drop").classList.remove("hidden");
+  document.getElementById("file").value="";
+});
+
+const refreshBtn=document.getElementById("refresh");
+if(refreshBtn){
+  if(!CONFIG.DATA_URL){ refreshBtn.style.display="none"; }
+  refreshBtn.addEventListener("click",async()=>{
+    const old=refreshBtn.textContent; refreshBtn.textContent="Refreshing…"; refreshBtn.disabled=true;
+    await loadFromUrl(true);
+    refreshBtn.textContent=old; refreshBtn.disabled=false;
+  });
+}
+
+function setMode(m){
+  MODE=m;
+  document.getElementById("modeCal").setAttribute("aria-pressed",m==="cal");
+  document.getElementById("modeBorn").setAttribute("aria-pressed",m==="born");
+  if(RAW) draw();
+}
+document.getElementById("modeCal").addEventListener("click",()=>setMode("cal"));
+document.getElementById("modeBorn").addEventListener("click",()=>setMode("born"));
+
+let _resizeTO;
+window.addEventListener("resize",()=>{ clearTimeout(_resizeTO); _resizeTO=setTimeout(()=>{ if(RAW) drawActogram(); },150); });
+
+tryAutoload();
+</script>
+</body>
+</html>
